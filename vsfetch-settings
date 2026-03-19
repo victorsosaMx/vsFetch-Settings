@@ -1,0 +1,1984 @@
+#!/usr/bin/env python3
+"""vsFetch Settings — graphical config editor for vsFetch"""
+
+__version__ = "1.0"
+
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Pango
+import json, os, copy, shutil, tempfile, subprocess, colorsys, random, re
+
+# ── defaults (mirrors vsFetch) ────────────────────────────────────────────────
+
+DEFAULTS = {
+    "extends": "",
+    "palette": {
+        "bg":               "#13131c",
+        "bg_header":        "#181825",
+        "border":           "#313244",
+        "text":             "#cdd6f4",
+        "text_dim":         "#6c7086",
+        "text_mid":         "#a6adc8",
+        "accent":           "#89b4fa",
+        "ok":               "#a6e3a1",
+        "mid":              "#f9e2af",
+        "hi":               "#f38ba8",
+        "btn_github":       "#238636",
+        "btn_github_hover": "#2ea043",
+        "btn_web":          "#1d6fa5",
+        "btn_web_hover":    "#2484c1",
+    },
+    "font":         "JetBrainsMono Nerd Font",
+    "font_sizes":   {"title": 20, "body": 13, "small": 11},
+    "default_mode": "full",
+    "layout":       "top",
+    "sections":     ["hardware", "desktop", "terminal", "development", "uptime"],
+    "chassis":      "",
+    "dev_tools": [
+        {"icon": "󱘗", "name": "Rust",   "cmd": "rustc --version 2>/dev/null | awk '{print $2}'"},
+        {"icon": "󰙱", "name": "Clang",  "cmd": "clang --version 2>/dev/null | grep -oP 'version [0-9.]+' | awk '{print $2}'"},
+        {"icon": "󰎙", "name": "NodeJS", "cmd": "node --version 2>/dev/null"},
+        {"icon": "󰟓", "name": "Go",     "cmd": "go version 2>/dev/null | awk '{print $3}' | tr -d go"},
+        {"icon": "󰪳", "name": ".NET",   "cmd": "dotnet --version 2>/dev/null"},
+        {"icon": "󰨞", "name": "Editor", "cmd": "code --version 2>/dev/null | head -1"},
+        {"icon": "󰊢", "name": "Git",    "cmd": "git --version 2>/dev/null | awk '{print $3}'"},
+    ],
+    "logo":         {"size": 56, "override": "", "sidebar_position": "bottom"},
+    "window":       {"width": 700, "height_mini": 380, "height_full": 680},
+    "gradient_bar": {"enabled": False, "color_a": "#89b4fa", "color_b": "#f38ba8"},
+    "bg_image":     {"enabled": True,  "path": "", "size": 200, "opacity": 0.15},
+    "animation":    {
+        "enabled": False, "type": "rain", "scope": "body",
+        "color": "", "opacity": 0.25, "speed": 1.0, "drops": 80,
+    },
+}
+
+# ── palette presets ───────────────────────────────────────────────────────────
+# Each entry: all 14 palette keys.  btn_* defaults carried from Catppuccin Mocha.
+_BTN = {"btn_github": "#238636", "btn_github_hover": "#2ea043",
+        "btn_web": "#1d6fa5",    "btn_web_hover":    "#2484c1"}
+
+PALETTE_PRESETS = {
+    "Anime": {
+        "bg": "#fce4ec", "bg_header": "#f8bbd0", "border": "#f48fb1",
+        "text": "#880e4f", "text_dim": "#c2185b", "text_mid": "#ad1457",
+        "accent": "#e91e63", "ok": "#4caf50", "mid": "#ff9800", "hi": "#f44336",
+        **_BTN},
+    "Aurora Borealis": {
+        "bg": "#0a0e14", "bg_header": "#0f1923", "border": "#1a2a3a",
+        "text": "#b3e5fc", "text_dim": "#4a8fa8", "text_mid": "#7ecce8",
+        "accent": "#00bcd4", "ok": "#4db6ac", "mid": "#ffd54f", "hi": "#ef5350",
+        **_BTN},
+    "Carnage": {
+        "bg": "#0d0000", "bg_header": "#1a0000", "border": "#3d0000",
+        "text": "#ffcccc", "text_dim": "#994444", "text_mid": "#cc6666",
+        "accent": "#ff3333", "ok": "#66ff66", "mid": "#ffaa00", "hi": "#ff0000",
+        **_BTN},
+    "Catppuccin Frappe": {
+        "bg": "#303446", "bg_header": "#292c3c", "border": "#414559",
+        "text": "#c6d0f5", "text_dim": "#737994", "text_mid": "#a5adce",
+        "accent": "#8caaee", "ok": "#a6d189", "mid": "#e5c890", "hi": "#e78284",
+        **_BTN},
+    "Catppuccin Latte": {
+        "bg": "#eff1f5", "bg_header": "#e6e9ef", "border": "#bcc0cc",
+        "text": "#4c4f69", "text_dim": "#8c8fa1", "text_mid": "#6c6f85",
+        "accent": "#1e66f5", "ok": "#40a02b", "mid": "#df8e1d", "hi": "#d20f39",
+        **_BTN},
+    "Catppuccin Macchiato": {
+        "bg": "#24273a", "bg_header": "#1e2030", "border": "#363a4f",
+        "text": "#cad3f5", "text_dim": "#6e738d", "text_mid": "#a5adcb",
+        "accent": "#8aadf4", "ok": "#a6da95", "mid": "#eed49f", "hi": "#ed8796",
+        **_BTN},
+    "Catppuccin Mocha": {
+        "bg": "#13131c", "bg_header": "#181825", "border": "#313244",
+        "text": "#cdd6f4", "text_dim": "#6c7086", "text_mid": "#a6adc8",
+        "accent": "#89b4fa", "ok": "#a6e3a1", "mid": "#f9e2af", "hi": "#f38ba8",
+        **_BTN},
+    "Cyberpunk Neon": {
+        "bg": "#0d0221", "bg_header": "#130733", "border": "#2d0d5e",
+        "text": "#e0d7ff", "text_dim": "#7c5cbf", "text_mid": "#b39ddb",
+        "accent": "#00e5ff", "ok": "#00ff9f", "mid": "#ffea00", "hi": "#ff1744",
+        **_BTN},
+    "Cyberpunk Yellow": {
+        "bg": "#0a0a00", "bg_header": "#141400", "border": "#333300",
+        "text": "#ffffcc", "text_dim": "#888800", "text_mid": "#cccc00",
+        "accent": "#f5f500", "ok": "#aaff00", "mid": "#ff8800", "hi": "#ff2200",
+        **_BTN},
+    "Dracula": {
+        "bg": "#282a36", "bg_header": "#21222c", "border": "#44475a",
+        "text": "#f8f8f2", "text_dim": "#6272a4", "text_mid": "#bd93f9",
+        "accent": "#bd93f9", "ok": "#50fa7b", "mid": "#f1fa8c", "hi": "#ff5555",
+        "btn_github": "#50fa7b", "btn_github_hover": "#69ff92",
+        "btn_web": "#8be9fd",    "btn_web_hover":    "#a5edfe"},
+    "Everforest Dark": {
+        "bg": "#2d353b", "bg_header": "#272e33", "border": "#3d484d",
+        "text": "#d3c6aa", "text_dim": "#7a8478", "text_mid": "#9da9a0",
+        "accent": "#a7c080", "ok": "#a7c080", "mid": "#dbbc7f", "hi": "#e67e80",
+        **_BTN},
+    "Forest": {
+        "bg": "#1e2718", "bg_header": "#232d1c", "border": "#2d3d24",
+        "text": "#d5c9a1", "text_dim": "#5a6e4a", "text_mid": "#8a9e6a",
+        "accent": "#a7c080", "ok": "#83c092", "mid": "#dbbc7f", "hi": "#e67e80",
+        **_BTN},
+    "Forest Daylight": {
+        "bg": "#f2f4e8", "bg_header": "#e8ebdc", "border": "#c5c9b0",
+        "text": "#3a4a2a", "text_dim": "#6a7a5a", "text_mid": "#5a6a3a",
+        "accent": "#4a8a3a", "ok": "#40a02b", "mid": "#c8a020", "hi": "#cc3333",
+        **_BTN},
+    "GitHub Dark": {
+        "bg": "#0d1117", "bg_header": "#161b22", "border": "#30363d",
+        "text": "#e6edf3", "text_dim": "#8b949e", "text_mid": "#b1bac4",
+        "accent": "#58a6ff", "ok": "#3fb950", "mid": "#d29922", "hi": "#f85149",
+        "btn_github": "#238636", "btn_github_hover": "#2ea043",
+        "btn_web": "#1f6feb",    "btn_web_hover":    "#388bfd"},
+    "GitHub Dark Colorblind": {
+        "bg": "#0d1117", "bg_header": "#161b22", "border": "#30363d",
+        "text": "#e6edf3", "text_dim": "#8b949e", "text_mid": "#b1bac4",
+        "accent": "#1f6feb", "ok": "#26a641", "mid": "#9e6a08", "hi": "#da3633",
+        **_BTN},
+    "GitHub Light": {
+        "bg": "#ffffff", "bg_header": "#f6f8fa", "border": "#d0d7de",
+        "text": "#24292f", "text_dim": "#6e7781", "text_mid": "#57606a",
+        "accent": "#0969da", "ok": "#1a7f37", "mid": "#9a6700", "hi": "#cf222e",
+        **_BTN},
+    "Gruvbox Dark": {
+        "bg": "#282828", "bg_header": "#1d2021", "border": "#3c3836",
+        "text": "#ebdbb2", "text_dim": "#928374", "text_mid": "#d5c4a1",
+        "accent": "#fabd2f", "ok": "#b8bb26", "mid": "#fabd2f", "hi": "#fb4934",
+        **_BTN},
+    "Gruvbox Light": {
+        "bg": "#fbf1c7", "bg_header": "#f2e5bc", "border": "#d5c4a1",
+        "text": "#3c3836", "text_dim": "#7c6f64", "text_mid": "#504945",
+        "accent": "#d79921", "ok": "#79740e", "mid": "#b57614", "hi": "#cc241d",
+        **_BTN},
+    "Hello Kitty": {
+        "bg": "#fff0f5", "bg_header": "#ffe4f0", "border": "#ffb7d5",
+        "text": "#8b0045", "text_dim": "#cc5588", "text_mid": "#ee82b5",
+        "accent": "#ff69b4", "ok": "#77dd77", "mid": "#fdfd96", "hi": "#ff6961",
+        **_BTN},
+    "Ice Mint": {
+        "bg": "#e8f8f5", "bg_header": "#d5f2eb", "border": "#a8dcc9",
+        "text": "#1a4a3a", "text_dim": "#5a9a84", "text_mid": "#3a7a64",
+        "accent": "#1abc9c", "ok": "#27ae60", "mid": "#f39c12", "hi": "#e74c3c",
+        **_BTN},
+    "Luigi Dark": {
+        "bg": "#0a1a0a", "bg_header": "#0f230f", "border": "#1a4a1a",
+        "text": "#ccffcc", "text_dim": "#3a7a3a", "text_mid": "#66aa66",
+        "accent": "#00cc44", "ok": "#00ff44", "mid": "#ffcc00", "hi": "#ff4400",
+        **_BTN},
+    "Mario": {
+        "bg": "#fff8f0", "bg_header": "#ffe8d0", "border": "#ffb87a",
+        "text": "#8b2500", "text_dim": "#cc5500", "text_mid": "#e07a00",
+        "accent": "#ff4500", "ok": "#4caf50", "mid": "#ff9800", "hi": "#f44336",
+        **_BTN},
+    "Mario Dark": {
+        "bg": "#0a0500", "bg_header": "#150a00", "border": "#3d1a00",
+        "text": "#ffe0c0", "text_dim": "#995500", "text_mid": "#cc8800",
+        "accent": "#ff8c00", "ok": "#66bb00", "mid": "#ffcc00", "hi": "#ff3300",
+        **_BTN},
+    "Monokai": {
+        "bg": "#272822", "bg_header": "#1e1f1c", "border": "#3e3d32",
+        "text": "#f8f8f2", "text_dim": "#75715e", "text_mid": "#cfcfc2",
+        "accent": "#fd971f", "ok": "#a6e22e", "mid": "#e6db74", "hi": "#f92672",
+        **_BTN},
+    "Nord": {
+        "bg": "#2e3440", "bg_header": "#272c36", "border": "#3b4252",
+        "text": "#eceff4", "text_dim": "#616e88", "text_mid": "#d8dee9",
+        "accent": "#88c0d0", "ok": "#a3be8c", "mid": "#ebcb8b", "hi": "#bf616a",
+        **_BTN},
+    "Nord Light": {
+        "bg": "#eceff4", "bg_header": "#e5e9f0", "border": "#d8dee9",
+        "text": "#2e3440", "text_dim": "#616e88", "text_mid": "#4c566a",
+        "accent": "#5e81ac", "ok": "#4c7a34", "mid": "#8b6914", "hi": "#8b3535",
+        **_BTN},
+    "One Dark": {
+        "bg": "#282c34", "bg_header": "#21252b", "border": "#3e4451",
+        "text": "#abb2bf", "text_dim": "#5c6370", "text_mid": "#828997",
+        "accent": "#61afef", "ok": "#98c379", "mid": "#e5c07b", "hi": "#e06c75",
+        **_BTN},
+    "Retro Paper": {
+        "bg": "#1a1510", "bg_header": "#221c14", "border": "#3d3020",
+        "text": "#e8d5b0", "text_dim": "#7a6540", "text_mid": "#b89a60",
+        "accent": "#d4a843", "ok": "#8aaa44", "mid": "#d4a843", "hi": "#cc5533",
+        **_BTN},
+    "Rosé Pine": {
+        "bg": "#191724", "bg_header": "#1f1d2e", "border": "#26233a",
+        "text": "#e0def4", "text_dim": "#6e6a86", "text_mid": "#908caa",
+        "accent": "#c4a7e7", "ok": "#31748f", "mid": "#f6c177", "hi": "#eb6f92",
+        **_BTN},
+    "Sand": {
+        "bg": "#2a2318", "bg_header": "#332b1e", "border": "#5c4e38",
+        "text": "#f0e6d3", "text_dim": "#9e8a6e", "text_mid": "#c8b090",
+        "accent": "#d4a843", "ok": "#8aaa44", "mid": "#cc8822", "hi": "#cc4422",
+        **_BTN},
+    "Solarized Dark": {
+        "bg": "#002b36", "bg_header": "#073642", "border": "#0d4a5a",
+        "text": "#eee8d5", "text_dim": "#586e75", "text_mid": "#839496",
+        "accent": "#268bd2", "ok": "#859900", "mid": "#b58900", "hi": "#dc322f",
+        **_BTN},
+    "Solarized Light": {
+        "bg": "#fdf6e3", "bg_header": "#eee8d5", "border": "#d3cbb8",
+        "text": "#586e75", "text_dim": "#93a1a1", "text_mid": "#657b83",
+        "accent": "#268bd2", "ok": "#859900", "mid": "#b58900", "hi": "#dc322f",
+        **_BTN},
+    "Tokyo Night": {
+        "bg": "#1a1b26", "bg_header": "#16161e", "border": "#292e42",
+        "text": "#c0caf5", "text_dim": "#565f89", "text_mid": "#a9b1d6",
+        "accent": "#7aa2f7", "ok": "#9ece6a", "mid": "#e0af68", "hi": "#f7768e",
+        **_BTN},
+    "Tux": {
+        "bg": "#e8f0f8", "bg_header": "#d0e4f5", "border": "#9abcd4",
+        "text": "#1a3a5c", "text_dim": "#5a8aac", "text_mid": "#3a6a8c",
+        "accent": "#2680c2", "ok": "#2e7d32", "mid": "#f57f17", "hi": "#c62828",
+        **_BTN},
+    "Ubuntu Dark": {
+        "bg": "#1a0800", "bg_header": "#2a1000", "border": "#5c3010",
+        "text": "#ffe0cc", "text_dim": "#995520", "text_mid": "#cc8844",
+        "accent": "#e95420", "ok": "#88cc00", "mid": "#ffaa00", "hi": "#ff3300",
+        **_BTN},
+    "Ubuntu Light": {
+        "bg": "#fff8f5", "bg_header": "#ffe8e0", "border": "#ffc0a0",
+        "text": "#3a1500", "text_dim": "#884400", "text_mid": "#bb6622",
+        "accent": "#e95420", "ok": "#4e9a06", "mid": "#c4a000", "hi": "#cc0000",
+        **_BTN},
+    "Vader": {
+        "bg": "#050505", "bg_header": "#0a0a0a", "border": "#1a0000",
+        "text": "#cccccc", "text_dim": "#555555", "text_mid": "#888888",
+        "accent": "#cc0000", "ok": "#448844", "mid": "#888800", "hi": "#cc0000",
+        "btn_github": "#238636", "btn_github_hover": "#2ea043",
+        "btn_web": "#8b0000",    "btn_web_hover":    "#aa0000"},
+}
+
+# ── template builder ─────────────────────────────────────────────────────────
+
+def _tpl(pal, layout="left", anim="rain", scope="body",
+         anim_on=True, mode="full", gradient=False,
+         opacity=0.25, speed=1.0, drops=80, logo_pos="bottom"):
+    p = PALETTE_PRESETS[pal]
+    return {
+        "extends": "",
+        "palette": dict(p),
+        "font": "JetBrainsMono Nerd Font",
+        "font_sizes": {"title": 20, "body": 13, "small": 11},
+        "default_mode": mode,
+        "layout": layout,
+        "sections": ["hardware", "desktop", "terminal", "development", "uptime"],
+        "chassis": "",
+        "dev_tools": DEFAULTS["dev_tools"],
+        "logo":   {"size": 56, "override": "", "sidebar_position": logo_pos},
+        "window": {"width": 700, "height_mini": 380, "height_full": 680},
+        "gradient_bar": {"enabled": gradient, "color_a": p["accent"], "color_b": p["hi"]},
+        "bg_image":  {"enabled": True, "path": "", "size": 200, "opacity": 0.15},
+        "animation": {
+            "enabled": anim_on, "type": anim, "scope": scope,
+            "color": "", "opacity": opacity, "speed": speed, "drops": drops,
+        },
+    }
+
+TEMPLATES = {
+    "Anime · Snow · Left":                  _tpl("Anime",                  "left", "snow",   drops=60,  opacity=0.35, speed=0.8),
+    "Aurora Borealis · Aurora · Full":      _tpl("Aurora Borealis",        "left", "aurora", scope="full", opacity=0.30, speed=0.8),
+    "Carnage · Rain · Left":                _tpl("Carnage",                "left", "rain",   opacity=0.30, speed=1.2),
+    "Catppuccin Frappe · Warp · Left":      _tpl("Catppuccin Frappe",      "left", "warp",   scope="full", opacity=0.20),
+    "Catppuccin Latte · Clean · Top":       _tpl("Catppuccin Latte",       "top",  "rain",   anim_on=False),
+    "Catppuccin Macchiato · Aurora · Left": _tpl("Catppuccin Macchiato",   "left", "aurora", opacity=0.20),
+    "Catppuccin Mocha · Rain · Left":       _tpl("Catppuccin Mocha",       "left", "rain",   opacity=0.25),
+    "Cyberpunk Neon · Matrix · Full":       _tpl("Cyberpunk Neon",         "left", "matrix", scope="full", opacity=0.30, speed=1.5),
+    "Cyberpunk Yellow · Matrix · Left":     _tpl("Cyberpunk Yellow",       "left", "matrix", opacity=0.25, speed=1.3),
+    "Dracula · Rain · Left":                _tpl("Dracula",                "left", "rain",   opacity=0.20),
+    "Everforest · Aurora · Left":           _tpl("Everforest Dark",        "left", "aurora", opacity=0.25, speed=0.7),
+    "Forest · Snow · Left":                 _tpl("Forest",                 "left", "snow",   drops=50,  opacity=0.30, speed=0.6),
+    "Forest Daylight · Clean · Top":        _tpl("Forest Daylight",        "top",  "rain",   anim_on=False),
+    "GitHub Dark · Rain · Top":             _tpl("GitHub Dark",            "top",  "rain",   opacity=0.15),
+    "GitHub Light · Clean · Top":           _tpl("GitHub Light",           "top",  "rain",   anim_on=False),
+    "Gruvbox Dark · Warp · Left":           _tpl("Gruvbox Dark",           "left", "warp",   drops=60,  opacity=0.20),
+    "Gruvbox Light · Clean · Top":          _tpl("Gruvbox Light",          "top",  "rain",   anim_on=False),
+    "Hello Kitty · Snow · Left":            _tpl("Hello Kitty",            "left", "snow",   drops=80,  opacity=0.40, speed=0.7),
+    "Ice Mint · Aurora · Top":              _tpl("Ice Mint",               "top",  "aurora", opacity=0.20, speed=0.9),
+    "Luigi Dark · Matrix · Left":           _tpl("Luigi Dark",             "left", "matrix", opacity=0.25, speed=1.2),
+    "Mario · Warp · Top":                   _tpl("Mario",                  "top",  "warp",   drops=50,  opacity=0.20),
+    "Mario Dark · Rain · Left":             _tpl("Mario Dark",             "left", "rain",   opacity=0.30, speed=1.1),
+    "Monokai · Rain · Left":                _tpl("Monokai",                "left", "rain",   opacity=0.20),
+    "Nord · Snow · Left":                   _tpl("Nord",                   "left", "snow",   drops=70,  opacity=0.30, speed=0.7),
+    "Nord Light · Clean · Top":             _tpl("Nord Light",             "top",  "snow",   anim_on=False),
+    "One Dark · Rain · Left":               _tpl("One Dark",               "left", "rain",   opacity=0.20),
+    "Retro Paper · Matrix · Top":           _tpl("Retro Paper",            "top",  "matrix", opacity=0.20, speed=0.9),
+    "Rosé Pine · Aurora · Left":            _tpl("Rosé Pine",              "left", "aurora", opacity=0.20, speed=0.8),
+    "Sand · Warp · Left":                   _tpl("Sand",                   "left", "warp",   drops=60,  opacity=0.25, speed=0.9),
+    "Solarized Dark · Aurora · Left":       _tpl("Solarized Dark",         "left", "aurora", opacity=0.20, speed=0.8),
+    "Solarized Light · Clean · Top":        _tpl("Solarized Light",        "top",  "rain",   anim_on=False),
+    "Tokyo Night · Warp · Full":            _tpl("Tokyo Night",            "left", "warp",   scope="full", opacity=0.25),
+    "Tux · Snow · Top":                     _tpl("Tux",                    "top",  "snow",   drops=90,  opacity=0.30, speed=0.8),
+    "Ubuntu Dark · Rain · Left":            _tpl("Ubuntu Dark",            "left", "rain",   opacity=0.25, gradient=True),
+    "Ubuntu Light · Clean · Top":           _tpl("Ubuntu Light",           "top",  "rain",   anim_on=False),
+    "Vader · Warp · Full":                  _tpl("Vader",                  "left", "warp",   scope="full", opacity=0.30, speed=1.2, drops=100),
+}
+
+# ── themes ────────────────────────────────────────────────────────────────────
+
+THEME_DARK = {
+    "bg":  "#13131c", "hdr": "#181825", "brd": "#313244",
+    "txt": "#e4e8ff", "dim": "#bac2de", "mid": "#cdd6f4",
+    "acc": "#89b4fa", "acc_rgb": "137,180,250",
+    "save_fg": "#1e1e2e",
+}
+
+THEME_LIGHT = {
+    "bg":  "#eff1f5", "hdr": "#e6e9ef", "brd": "#bcc0cc",
+    "txt": "#1e1e2e", "dim": "#4c4f69", "mid": "#5c5f77",
+    "acc": "#1e66f5", "acc_rgb": "30,102,245",
+    "save_fg": "#eff1f5",
+}
+
+# ── CSS builder ───────────────────────────────────────────────────────────────
+
+def _build_css(t: dict) -> bytes:
+    return f"""
+* {{ font-family: "JetBrainsMono Nerd Font", monospace; }}
+
+window {{ background-color: {t['bg']}; }}
+
+.app-header {{
+    background-color: {t['hdr']};
+    border-bottom: 1px solid {t['brd']};
+    padding: 14px 20px;
+}}
+.app-title {{ color: {t['txt']}; font-size: 18px; font-weight: bold; }}
+.app-path  {{ color: {t['dim']}; font-size: 12px; }}
+
+notebook {{ background-color: {t['bg']}; }}
+notebook > header.left {{
+    background-color: {t['hdr']};
+    border-right: 1px solid {t['brd']};
+    padding: 8px 0;
+}}
+notebook > header > tabs > tab {{
+    background-color: transparent;
+    color: {t['dim']};
+    font-size: 14px;
+    padding: 10px 20px 10px 16px;
+    border: none;
+    border-left: 3px solid transparent;
+    border-radius: 0;
+    min-width: 120px;
+}}
+notebook > header > tabs > tab:checked {{
+    background-color: {t['bg']};
+    color: {t['acc']};
+    border-left-color: {t['acc']};
+}}
+notebook > header > tabs > tab:hover:not(:checked) {{
+    color: {t['txt']};
+    background-color: rgba({t['acc_rgb']}, 0.07);
+}}
+
+.page-scroll {{ background-color: {t['bg']}; }}
+.section-title {{
+    color: {t['acc']};
+    font-size: 12px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-top: 20px;
+    margin-bottom: 4px;
+}}
+.field-label {{ color: {t['dim']}; font-size: 14px; }}
+.color-key   {{ color: {t['mid']}; font-size: 14px; font-family: monospace; }}
+.hint-label  {{ color: {t['dim']}; font-size: 13px; font-style: italic; }}
+
+entry, spinbutton {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 10px;
+    caret-color: {t['acc']};
+    box-shadow: none;
+}}
+entry:focus, spinbutton:focus {{ border-color: {t['acc']}; }}
+entry.entry-error {{ border-color: #f38ba8; }}
+entry.entry-error:focus {{ border-color: #f38ba8; }}
+
+combobox button {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 8px;
+    box-shadow: none;
+}}
+combobox button:hover {{ border-color: {t['acc']}; }}
+
+button {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 14px;
+    box-shadow: none;
+}}
+button:hover {{ border-color: {t['acc']}; color: {t['acc']}; }}
+
+.save-btn {{
+    background-color: {t['acc']};
+    color: {t['save_fg']};
+    border: none;
+    border-radius: 6px;
+    padding: 6px 22px;
+    font-weight: bold;
+    font-size: 14px;
+}}
+.save-btn:hover {{ background-color: rgba({t['acc_rgb']}, 0.8); }}
+
+.open-btn {{
+    background-color: transparent;
+    color: {t['dim']};
+    border: 1px solid {t['brd']};
+}}
+.open-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+
+.theme-btn {{
+    background-color: transparent;
+    color: {t['dim']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+    padding: 5px 10px;
+    font-size: 13px;
+}}
+.theme-btn:hover {{ color: {t['acc']}; border-color: {t['acc']}; }}
+
+switch {{ background-color: {t['brd']}; border-radius: 12px; min-width: 42px; }}
+switch slider {{ background-color: {t['dim']}; border-radius: 10px; }}
+switch:checked {{ background-color: {t['acc']}; }}
+switch:checked slider {{ background-color: {t['save_fg']}; }}
+
+treeview {{
+    background-color: {t['hdr']};
+    color: {t['txt']};
+    border: 1px solid {t['brd']};
+    border-radius: 5px;
+}}
+treeview:selected {{ background-color: rgba({t['acc_rgb']}, 0.18); color: {t['txt']}; }}
+treeview header button {{
+    background-color: {t['bg']};
+    color: {t['dim']};
+    border: none;
+    border-bottom: 1px solid {t['brd']};
+    border-radius: 0;
+    font-size: 13px;
+    padding: 4px 8px;
+}}
+
+separator {{ background-color: {t['brd']}; min-height: 1px; margin: 6px 0; }}
+
+.status-bar {{
+    background-color: {t['hdr']};
+    border-top: 1px solid {t['brd']};
+    padding: 7px 20px;
+}}
+.status-ok  {{ color: {t['acc']}; font-size: 13px; }}
+.status-hint {{ color: {t['dim']}; font-size: 12px; }}
+
+.tpl-card {{
+    border: 1px solid {t['brd']};
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 3px;
+}}
+.tpl-load {{
+    background-color: #f0f0f0;
+    color: #1a1a1a;
+    border: 1px solid #cccccc;
+    border-radius: 4px;
+    padding: 3px 14px;
+    font-size: 12px;
+    font-weight: bold;
+}}
+.tpl-load:hover {{
+    background-color: #ffffff;
+    border-color: #999999;
+    color: #000000;
+}}
+""".encode()
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _hex_to_rgba(h: str) -> Gdk.RGBA:
+    h = h.lstrip("#")
+    c = Gdk.RGBA()
+    c.red   = int(h[0:2], 16) / 255
+    c.green = int(h[2:4], 16) / 255
+    c.blue  = int(h[4:6], 16) / 255
+    c.alpha = 1.0
+    return c
+
+def _rgba_to_hex(c: Gdk.RGBA) -> str:
+    return "#{:02x}{:02x}{:02x}".format(
+        round(c.red * 255), round(c.green * 255), round(c.blue * 255)
+    )
+
+def _hsv_to_hex(hue: float, s: float, v: float) -> str:
+    r, g, b = colorsys.hsv_to_rgb(hue % 1.0, s, v)
+    return "#{:02x}{:02x}{:02x}".format(round(r*255), round(g*255), round(b*255))
+
+def _lbl(text: str, style: str = "field-label", xalign: float = 0.0) -> Gtk.Label:
+    w = Gtk.Label(label=text)
+    w.set_xalign(xalign)
+    w.get_style_context().add_class(style)
+    return w
+
+def _section(text: str) -> Gtk.Label:
+    return _lbl(text.upper(), "section-title")
+
+def _hint(text: str) -> Gtk.Label:
+    l = _lbl(text, "hint-label")
+    l.set_margin_bottom(10)
+    return l
+
+def _color_btn(hex_color: str) -> Gtk.ColorButton:
+    btn = Gtk.ColorButton()
+    btn.set_rgba(_hex_to_rgba(hex_color))
+    btn.set_title("Pick Color")
+    return btn
+
+def _spin(value, lo, hi, step=1, digits=0) -> Gtk.SpinButton:
+    adj = Gtk.Adjustment(value=value, lower=lo, upper=hi,
+                         step_increment=step, page_increment=step * 10)
+    sb = Gtk.SpinButton(adjustment=adj, digits=digits)
+    sb.set_numeric(True)
+    return sb
+
+def _combo(options: list, active: str) -> Gtk.ComboBoxText:
+    cb = Gtk.ComboBoxText()
+    for o in options:
+        cb.append_text(o)
+    cb.set_active(options.index(active) if active in options else 0)
+    return cb
+
+def _scrolled(child: Gtk.Widget) -> Gtk.ScrolledWindow:
+    sw = Gtk.ScrolledWindow()
+    sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    sw.get_style_context().add_class("page-scroll")
+    sw.add(child)
+    return sw
+
+def _find_vsfetch() -> str | None:
+    """Locate the vsfetch executable: PATH first, then relative to this script."""
+    p = shutil.which("vsfetch")
+    if p:
+        return p
+    here = os.path.dirname(os.path.abspath(__file__))
+    rel  = os.path.normpath(os.path.join(here, "..", "vsFetch", "vsfetch"))
+    return rel if os.path.isfile(rel) else None
+
+def _file_chooser(parent, title, patterns=None, mime_types=None) -> str | None:
+    dlg = Gtk.FileChooserDialog(
+        title=title, parent=parent,
+        action=Gtk.FileChooserAction.OPEN,
+        buttons=("Cancel", Gtk.ResponseType.CANCEL, "Open", Gtk.ResponseType.OK),
+    )
+    if patterns or mime_types:
+        ff = Gtk.FileFilter()
+        ff.set_name("Allowed files")
+        for p in (patterns or []):
+            ff.add_pattern(p)
+        for m in (mime_types or []):
+            ff.add_mime_type(m)
+        dlg.add_filter(ff)
+    path = dlg.get_filename() if dlg.run() == Gtk.ResponseType.OK else None
+    dlg.destroy()
+    return path
+
+# ── matugen → vsFetch palette mapping ────────────────────────────────────────
+# Material Design 3 roles from `matugen image … -j hex` → colors[role][default][color]
+
+_MATUGEN_MAP = {
+    "bg":               "background",
+    "bg_header":        "surface_container",
+    "border":           "outline_variant",
+    "text":             "on_surface",
+    "text_dim":         "outline",
+    "text_mid":         "on_surface_variant",
+    "accent":           "primary",
+    "ok":               "tertiary",
+    "mid":              "secondary_container",
+    "hi":               "error",
+    "btn_github":       "primary_container",
+    "btn_github_hover": "primary_fixed",
+    "btn_web":          "secondary",
+    "btn_web_hover":    "secondary_fixed",
+}
+
+# ── main window ───────────────────────────────────────────────────────────────
+
+class VsFetchSettings(Gtk.Window):
+
+    def __init__(self):
+        super().__init__(title="vsFetch Settings")
+        self.set_default_size(900, 640)
+        self.set_position(Gtk.WindowPosition.CENTER)
+        self.connect("delete-event", self._on_close)
+        self.connect("key-press-event", self._on_key)
+
+        self._config_path = os.path.expanduser("~/.config/vsfetch/config.json")
+        self._cfg: dict   = {}
+        self._w:   dict   = {}
+
+        self._dark          = False
+        self._theme         = THEME_LIGHT
+        self._css_provider  = Gtk.CssProvider()
+        self._loaded_tpl    = None
+        self._dirty         = False
+        self._path_lbl      = None
+        self._status_timer  = None
+
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(),
+            self._css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+        self._apply_css()
+        self._load_config()
+        self._build_ui()
+        self.show_all()
+        self._clear_dirty()
+
+    # ── window-level events ───────────────────────────────────────────────────
+
+    def _on_close(self, *_):
+        if not self._confirm_discard("Quit"):
+            return True   # block close
+        Gtk.main_quit()
+        return False
+
+    def _on_key(self, _, event):
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        if ctrl:
+            if event.keyval == Gdk.KEY_s: self._save();     return True
+            if event.keyval == Gdk.KEY_o: self._on_open();  return True
+            if event.keyval == Gdk.KEY_r: self._on_reset(); return True
+        return False
+
+    # ── CSS ───────────────────────────────────────────────────────────────────
+
+    def _apply_css(self):
+        self._css_provider.load_from_data(_build_css(self._theme))
+
+    def _toggle_theme(self, *_):
+        was_dirty = self._dirty
+        self._dark  = not self._dark
+        self._theme = THEME_DARK if self._dark else THEME_LIGHT
+        self._apply_css()
+        self._rebuild_ui()
+        if was_dirty:
+            self._mark_dirty()
+        else:
+            self._clear_dirty()
+
+    # ── config I/O ────────────────────────────────────────────────────────────
+
+    def _load_config(self):
+        self._cfg = copy.deepcopy(DEFAULTS)
+        try:
+            with open(self._config_path) as f:
+                user = json.load(f)
+            for s in ("palette", "font_sizes", "logo", "window",
+                      "gradient_bar", "bg_image", "animation"):
+                if s in user:
+                    self._cfg[s].update(user[s])
+            for k in ("font", "default_mode", "layout", "sections",
+                      "chassis", "dev_tools", "extends"):
+                if k in user:
+                    self._cfg[k] = user[k]
+        except FileNotFoundError:
+            pass
+        except Exception as e:
+            self._err(f"Could not load config:\n{e}")
+
+    def _collect(self):
+        w = self._w
+
+        for key, btn in w.get("palette", {}).items():
+            self._cfg["palette"][key] = _rgba_to_hex(btn.get_rgba())
+
+        if "font" in w:
+            raw  = w["font"].get_font_name()
+            desc = Pango.font_description_from_string(raw)
+            self._cfg["font"] = desc.get_family() or raw
+
+        for k in ("title", "body", "small"):
+            if f"fs_{k}" in w:
+                self._cfg["font_sizes"][k] = int(w[f"fs_{k}"].get_value())
+
+        for key in ("layout", "default_mode"):
+            if key in w:
+                self._cfg[key] = w[key].get_active_text()
+        for key in ("chassis", "extends"):
+            if key in w:
+                self._cfg[key] = w[key].get_text().strip()
+
+        if "sections_store" in w:
+            self._cfg["sections"] = [row[0] for row in w["sections_store"] if row[1]]
+
+        if "devtools_store" in w:
+            self._cfg["dev_tools"] = [
+                {"icon": row[0], "name": row[1], "cmd": row[2]}
+                for row in w["devtools_store"]
+            ]
+
+        for k in ("width", "height_full", "height_mini"):
+            if f"win_{k}" in w:
+                self._cfg["window"][k] = int(w[f"win_{k}"].get_value())
+
+        if "logo_size"       in w: self._cfg["logo"]["size"]             = int(w["logo_size"].get_value())
+        if "logo_override"   in w: self._cfg["logo"]["override"]         = w["logo_override"].get_text().strip()
+        if "logo_sidebar_pos"in w: self._cfg["logo"]["sidebar_position"] = w["logo_sidebar_pos"].get_active_text()
+
+        if "gb_enabled" in w: self._cfg["gradient_bar"]["enabled"] = w["gb_enabled"].get_active()
+        for k in ("color_a", "color_b"):
+            if f"gb_{k}" in w:
+                self._cfg["gradient_bar"][k] = _rgba_to_hex(w[f"gb_{k}"].get_rgba())
+
+        if "bgi_enabled" in w: self._cfg["bg_image"]["enabled"] = w["bgi_enabled"].get_active()
+        if "bgi_path"    in w: self._cfg["bg_image"]["path"]    = w["bgi_path"].get_text().strip()
+        if "bgi_size"    in w: self._cfg["bg_image"]["size"]    = int(w["bgi_size"].get_value())
+        if "bgi_opacity" in w: self._cfg["bg_image"]["opacity"] = round(w["bgi_opacity"].get_value(), 2)
+
+        if "anim_enabled" in w: self._cfg["animation"]["enabled"] = w["anim_enabled"].get_active()
+        if "anim_type"    in w: self._cfg["animation"]["type"]    = w["anim_type"].get_active_text()
+        if "anim_scope"   in w: self._cfg["animation"]["scope"]   = w["anim_scope"].get_active_text()
+        if "anim_color"   in w: self._cfg["animation"]["color"]   = w["anim_color"].get_text().strip()
+        for akey, digits in (("opacity", 2), ("speed", 2), ("drops", 0)):
+            wkey = f"anim_{akey}"
+            if wkey in w:
+                val = w[wkey].get_value()
+                self._cfg["animation"][akey] = round(val, digits) if digits else int(val)
+
+    def _save(self, *_):
+        dlg = Gtk.FileChooserDialog(
+            title="Save config as…", parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL, "Save", Gtk.ResponseType.OK),
+        )
+        dlg.set_do_overwrite_confirmation(True)
+        dlg.set_current_folder(os.path.dirname(self._config_path))
+        dlg.set_current_name(os.path.basename(self._config_path))
+        ff = Gtk.FileFilter()
+        ff.set_name("JSON configs")
+        ff.add_pattern("*.json")
+        dlg.add_filter(ff)
+        if dlg.run() == Gtk.ResponseType.OK:
+            path = dlg.get_filename()
+            dlg.destroy()
+            self._collect()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            try:
+                with open(path, "w") as f:
+                    json.dump(self._cfg, f, indent=2, ensure_ascii=False)
+                self._config_path = path
+                self._clear_dirty()
+                self._status(f"✓  Saved  →  {path}")
+            except Exception as e:
+                self._err(f"Could not save:\n{e}")
+        else:
+            dlg.destroy()
+
+    # ── UI skeleton ───────────────────────────────────────────────────────────
+
+    def _rebuild_ui(self):
+        """Save notebook page, strip children, rebuild, restore page."""
+        page = self._notebook.get_current_page()
+        for child in self.get_children():
+            self.remove(child)
+        self._build_ui()
+        self._notebook.set_current_page(page)
+        self.show_all()
+
+    def _build_ui(self):
+        self._w = {}
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(root)
+        root.pack_start(self._make_header(),   False, False, 0)
+        root.pack_start(self._make_notebook(), True,  True,  0)
+        root.pack_start(self._make_statusbar(), False, False, 0)
+        self._connect_dirty_signals()
+
+    def _make_statusbar(self) -> Gtk.Widget:
+        bar = Gtk.Box(spacing=10)
+        bar.get_style_context().add_class("status-bar")
+
+        self._status_lbl  = Gtk.Label(label="")
+        self._status_lbl.set_xalign(0)
+        self._status_lbl.get_style_context().add_class("status-ok")
+
+        self._status_hint = Gtk.Label(label="")
+        self._status_hint.set_xalign(0)
+        self._status_hint.get_style_context().add_class("status-hint")
+
+        bar.pack_start(self._status_lbl,  False, False, 0)
+        bar.pack_start(self._status_hint, False, False, 0)
+        return bar
+
+    def _status(self, main: str, hint: str = "", timeout: int = 6000):
+        self._status_lbl.set_text(main)
+        self._status_hint.set_text(hint)
+        if self._status_timer:
+            GLib.source_remove(self._status_timer)
+        def _clear():
+            self._status_lbl.set_text("")
+            self._status_hint.set_text("")
+            self._status_timer = None
+            return False
+        self._status_timer = GLib.timeout_add(timeout, _clear)
+
+    def _make_header(self) -> Gtk.Widget:
+        hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        hdr.get_style_context().add_class("app-header")
+
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        left.set_valign(Gtk.Align.CENTER)
+        left.pack_start(_lbl("󰒓  vsFetch Settings", "app-title"), False, False, 0)
+        self._path_lbl = _lbl(self._config_path, "app-path")
+        left.pack_start(self._path_lbl, False, False, 0)
+        hdr.pack_start(left, True, True, 0)
+
+        btn_box = Gtk.Box(spacing=8)
+        btn_box.set_valign(Gtk.Align.CENTER)
+
+        theme_btn = Gtk.Button(label="☾" if self._dark else "☀")
+        theme_btn.get_style_context().add_class("theme-btn")
+        theme_btn.set_tooltip_text("Switch to light mode" if self._dark else "Switch to dark mode")
+        theme_btn.connect("clicked", self._toggle_theme)
+
+        reset_btn = Gtk.Button(label="↺")
+        reset_btn.get_style_context().add_class("open-btn")
+        reset_btn.set_tooltip_text("Reset to defaults (Catppuccin Mocha)")
+        reset_btn.connect("clicked", self._on_reset)
+
+        open_btn = Gtk.Button(label="Open…")
+        open_btn.get_style_context().add_class("open-btn")
+        open_btn.connect("clicked", self._on_open)
+
+        save_btn = Gtk.Button(label="Save As…")
+        save_btn.get_style_context().add_class("save-btn")
+        save_btn.connect("clicked", self._save)
+
+        preview_btn = Gtk.Button(label="Preview")
+        preview_btn.get_style_context().add_class("open-btn")
+        preview_btn.set_tooltip_text("Launch vsFetch with current (unsaved) settings")
+        preview_btn.connect("clicked", self._preview)
+
+        export_btn = Gtk.Button(label="Export…")
+        export_btn.get_style_context().add_class("open-btn")
+        export_btn.set_tooltip_text("Export current settings as a shareable theme file")
+        export_btn.connect("clicked", self._export_theme)
+
+        btn_box.pack_start(theme_btn,   False, False, 0)
+        btn_box.pack_start(reset_btn,   False, False, 0)
+        btn_box.pack_start(preview_btn, False, False, 0)
+        btn_box.pack_start(open_btn,    False, False, 0)
+        btn_box.pack_start(export_btn,  False, False, 0)
+        btn_box.pack_start(save_btn,    False, False, 0)
+        hdr.pack_end(btn_box, False, False, 0)
+        return hdr
+
+    def _make_notebook(self) -> Gtk.Notebook:
+        nb = Gtk.Notebook()
+        self._notebook = nb
+        nb.set_tab_pos(Gtk.PositionType.LEFT)
+        nb.set_show_border(False)
+        for name, builder in [
+            ("  Templates ", self._page_templates),
+            ("  Palette   ", self._page_palette),
+            ("  Typography", self._page_typography),
+            ("  Sections  ", self._page_sections),
+            ("  Dev Tools ", self._page_devtools),
+            ("  Window    ", self._page_window),
+            ("  Effects   ", self._page_effects),
+            ("  General   ", self._page_general),
+            ("  About     ", self._page_about),
+        ]:
+            tab = _lbl(name)
+            tab.set_xalign(0)
+            nb.append_page(builder(), tab)
+        return nb
+
+    # ── shared helpers ────────────────────────────────────────────────────────
+
+    def _row(self, label: str, widget: Gtk.Widget, switch: bool = False) -> Gtk.Box:
+        row = Gtk.Box(spacing=12)
+        row.set_margin_bottom(6)
+        lbl = _lbl(label)
+        lbl.set_width_chars(30)
+        row.pack_start(lbl, False, False, 0)
+        if switch:
+            row.pack_end(widget, False, False, 0)
+        else:
+            row.pack_start(widget, False, False, 0)
+        return row
+
+    def _padded(self) -> Gtk.Box:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        box.set_border_width(24)
+        return box
+
+    # ── page: Palette ─────────────────────────────────────────────────────────
+
+    # ── page: Templates ───────────────────────────────────────────────────────
+
+    def _page_templates(self) -> Gtk.Widget:
+        outer = self._padded()
+        outer.pack_start(_section("Complete Templates"), False, False, 0)
+        outer.pack_start(
+            _hint("Preview launches vsFetch instantly · Load applies it here · Save As… to keep it."),
+            False, False, 0,
+        )
+
+        flow = Gtk.FlowBox()
+        flow.set_max_children_per_line(2)
+        flow.set_min_children_per_line(1)
+        flow.set_selection_mode(Gtk.SelectionMode.NONE)
+        flow.set_row_spacing(6)
+        flow.set_column_spacing(6)
+        flow.set_margin_top(8)
+        flow.set_homogeneous(True)
+
+        for name in sorted(TEMPLATES.keys()):
+            flow.add(self._make_tpl_card(name, TEMPLATES[name]))
+
+        outer.pack_start(flow, True, True, 0)
+        sw = _scrolled(outer)
+        self._templates_sw = sw
+        return sw
+
+    def _make_tpl_card(self, name: str, tpl: dict) -> Gtk.Widget:
+        pal  = tpl["palette"]
+        bg   = pal["bg"]
+        txt  = pal["text"]
+        acc  = pal["accent"]
+        anim = tpl["animation"]
+
+        # per-card background + active highlight via dedicated provider
+        is_active = (name == self._loaded_tpl)
+        cls       = "tc" + re.sub(r'[^A-Za-z0-9]', '', name)
+        provider  = Gtk.CssProvider()
+        if is_active:
+            provider.load_from_data(
+                f".{cls} {{ background-color: {bg}; border: 3px solid {acc}; }}".encode()
+            )
+        else:
+            provider.load_from_data(
+                f".{cls} {{ background-color: {bg}; }}".encode()
+            )
+
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        card.set_size_request(280, -1)
+        card.get_style_context().add_class("tpl-card")
+        card.get_style_context().add_class(cls)
+        card.get_style_context().add_provider(
+            provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION + 1
+        )
+
+        # template name
+        name_lbl = Gtk.Label()
+        name_lbl.set_markup(
+            f'<span foreground="{txt}" weight="bold" size="13500">'
+            f'{GLib.markup_escape_text(name)}</span>'
+        )
+        name_lbl.set_xalign(0)
+        name_lbl.set_line_wrap(True)
+        card.pack_start(name_lbl, False, False, 0)
+
+        # description line
+        anim_lbl  = anim["type"].capitalize() if anim["enabled"] else "No animation"
+        scope_lbl = f" · {anim['scope']}" if anim["enabled"] else ""
+        layout_lbl = "Left sidebar" if tpl["layout"] == "left" else "Top header"
+        mode_lbl   = tpl["default_mode"].capitalize()
+        desc = f"{anim_lbl}{scope_lbl}  ·  {layout_lbl}  ·  {mode_lbl}"
+        desc_lbl = Gtk.Label()
+        desc_lbl.set_markup(
+            f'<span foreground="{acc}" size="10500">{GLib.markup_escape_text(desc)}</span>'
+        )
+        desc_lbl.set_xalign(0)
+        card.pack_start(desc_lbl, False, False, 0)
+
+        if is_active:
+            hint_lbl = Gtk.Label()
+            hint_lbl.set_markup(
+                f'<span foreground="{txt}" size="9500" style="italic">'
+                f'Preview to see it live  ·  customize in the tabs  ·  Save As… to keep it'
+                f'</span>'
+            )
+            hint_lbl.set_xalign(0)
+            hint_lbl.set_line_wrap(True)
+            hint_lbl.set_margin_top(4)
+            card.pack_start(hint_lbl, False, False, 0)
+
+        # buttons (right-aligned): Preview · Load
+        btn_row = Gtk.Box(spacing=6)
+        btn_row.set_margin_top(4)
+        spacer = Gtk.Label()
+        spacer.set_hexpand(True)
+
+        prev_btn = Gtk.Button(label="Preview")
+        prev_btn.get_style_context().add_class("tpl-load")
+        prev_btn.get_style_context().remove_class("button")
+        prev_btn.connect("clicked", lambda _, t=tpl: self._preview_cfg(self._apply_template(t)))
+
+        load_btn = Gtk.Button(label="✓ Loaded" if is_active else "Load")
+        load_btn.get_style_context().add_class("tpl-load")
+        load_btn.get_style_context().remove_class("button")
+        if is_active:
+            load_btn.set_sensitive(False)
+        load_btn.connect("clicked", lambda _, n=name: self._load_template(n))
+
+        btn_row.pack_start(spacer,    True,  True,  0)
+        btn_row.pack_start(prev_btn,  False, False, 0)
+        btn_row.pack_start(load_btn,  False, False, 0)
+        card.pack_start(btn_row, False, False, 0)
+
+        return card
+
+    def _preview_cfg(self, cfg: dict):
+        vsfetch = _find_vsfetch()
+        if not vsfetch:
+            self._err("vsfetch not found.\n\nInstall it via AUR or run from the project directory.")
+            return
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".json", prefix="vsfetch_preview_", delete=False, mode="w"
+        )
+        json.dump(cfg, tmp, indent=2, ensure_ascii=False)
+        tmp.close()
+        try:
+            subprocess.Popen(
+                ["python3", vsfetch, "--config", tmp.name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            GLib.timeout_add(3000, lambda: (os.unlink(tmp.name), False)[1])
+        except Exception as e:
+            os.unlink(tmp.name)
+            self._err(f"Could not launch vsfetch:\n{e}")
+
+    def _load_template(self, name: str):
+        if not self._confirm_discard("Load template"):
+            return
+        scroll = 0
+        if hasattr(self, "_templates_sw"):
+            scroll = self._templates_sw.get_vadjustment().get_value()
+        page = self._notebook.get_current_page() if hasattr(self, "_notebook") else 0
+
+        self._loaded_tpl = name
+        self._cfg = self._apply_template(TEMPLATES[name])
+        self._rebuild_ui()
+        self._clear_dirty()
+
+        GLib.idle_add(lambda: (
+            self._templates_sw.get_vadjustment().set_value(scroll), False
+        )[1])
+
+        self._status(
+            f"✓  {name}",
+            "·  Preview to see it live  ·  customize in the tabs  ·  Save As… to keep it",
+        )
+
+    # ── page: Palette ─────────────────────────────────────────────────────────
+
+    def _page_palette(self) -> Gtk.Widget:
+        box = self._padded()
+
+        # ── preset selector ───────────────────────────────────────────────────
+        box.pack_start(_section("Preset Palettes"), False, False, 0)
+
+        # store: display name | bg hex (swatch) | text hex (readability)
+        preset_store = Gtk.ListStore(str, str, str)
+        for name in sorted(PALETTE_PRESETS.keys()):
+            pal = PALETTE_PRESETS[name]
+            preset_store.append([name, pal["bg"], pal["text"]])
+
+        combo = Gtk.ComboBox(model=preset_store)
+        combo.set_halign(Gtk.Align.START)
+
+        # narrow swatch cell — background color, no text
+        r_swatch = Gtk.CellRendererText()
+        r_swatch.set_property("width", 22)
+        r_swatch.set_property("text", "  ")
+        combo.pack_start(r_swatch, False)
+        combo.add_attribute(r_swatch, "background", 1)
+
+        # name cell — themed foreground
+        r_name = Gtk.CellRendererText()
+        r_name.set_property("xpad", 8)
+        combo.pack_start(r_name, True)
+        combo.add_attribute(r_name, "text", 0)
+
+        def _on_preset_changed(cb, *_):
+            it = cb.get_active_iter()
+            if not it:
+                return
+            pal = PALETTE_PRESETS[preset_store[it][0]]
+            for key, btn in self._w.get("palette", {}).items():
+                if key in pal:
+                    btn.set_rgba(_hex_to_rgba(pal[key]))
+
+        combo.connect("changed", _on_preset_changed)
+        box.pack_start(self._row("Load preset", combo), False, False, 0)
+
+        gen_row = Gtk.Box(spacing=8)
+        gen_row.set_margin_top(4)
+
+        img_btn = Gtk.Button(label="󰸉  From image…")
+        img_btn.get_style_context().add_class("open-btn")
+        img_btn.set_tooltip_text("Extract palette from any image using matugen")
+        img_btn.connect("clicked", self._load_palette_from_image)
+
+        color_btn = Gtk.Button(label="  From color…")
+        color_btn.get_style_context().add_class("open-btn")
+        color_btn.set_tooltip_text("Generate palette from a single base color using matugen")
+        color_btn.connect("clicked", self._load_palette_from_color)
+
+        rnd_btn = Gtk.Button(label="🎲  Random")
+        rnd_btn.get_style_context().add_class("open-btn")
+        rnd_btn.set_tooltip_text("Generate a random coherent palette")
+        rnd_btn.connect("clicked", self._random_palette)
+
+        self._rnd_mode = Gtk.ComboBoxText()
+        self._rnd_mode.append("dark",  "Dark")
+        self._rnd_mode.append("light", "Light")
+        self._rnd_mode.set_active_id("dark")
+        self._rnd_mode.set_tooltip_text("Palette style: applies to all three generation buttons")
+
+        gen_row.pack_start(self._rnd_mode, False, False, 0)
+        gen_row.pack_start(img_btn,        False, False, 0)
+        gen_row.pack_start(color_btn,      False, False, 0)
+        gen_row.pack_start(rnd_btn,        False, False, 0)
+        box.pack_start(gen_row, False, False, 0)
+        box.pack_start(_hint("Dark / Light governs all three buttons · From image / color requires matugen"), False, False, 0)
+
+        box.pack_start(Gtk.Separator(), False, False, 0)
+
+        # ── manual color editors ──────────────────────────────────────────────
+        box.pack_start(_section("Color Palette"), False, False, 0)
+
+        LABELS = [
+            ("bg",               "Background"),
+            ("bg_header",        "Header background"),
+            ("border",           "Border / separator"),
+            ("text",             "Primary text"),
+            ("text_dim",         "Secondary text"),
+            ("text_mid",         "Tertiary text"),
+            ("accent",           "Accent  —  icons, keys, titles"),
+            ("ok",               "Usage OK    (< 50%)"),
+            ("mid",              "Usage Mid   (50 – 79%)"),
+            ("hi",               "Usage High  (≥ 80%)"),
+            ("btn_github",       "GitHub button"),
+            ("btn_github_hover", "GitHub button hover"),
+            ("btn_web",          "Web button"),
+            ("btn_web_hover",    "Web button hover"),
+        ]
+        grid = Gtk.Grid()
+        grid.set_column_spacing(14)
+        grid.set_row_spacing(10)
+        grid.set_margin_top(8)
+
+        self._w["palette"] = {}
+        for i, (key, desc) in enumerate(LABELS):
+            kl = _lbl(key,  "color-key");  kl.set_width_chars(18)
+            dl = _lbl(desc, "field-label"); dl.set_width_chars(28)
+            btn = _color_btn(self._cfg["palette"].get(key, "#000000"))
+            self._w["palette"][key] = btn
+            grid.attach(kl, 0, i, 1, 1)
+            grid.attach(dl, 1, i, 1, 1)
+            grid.attach(btn, 2, i, 1, 1)
+
+        box.pack_start(grid, False, False, 0)
+        return _scrolled(box)
+
+    # ── page: Typography ──────────────────────────────────────────────────────
+
+    def _page_typography(self) -> Gtk.Widget:
+        box = self._padded()
+
+        box.pack_start(_section("Font Family"), False, False, 0)
+        fb = Gtk.FontButton()
+        fb.set_font(self._cfg["font"])
+        fb.set_use_size(False)
+        fb.set_show_size(False)
+        fb.set_halign(Gtk.Align.START)
+        self._w["font"] = fb
+        box.pack_start(self._row("Font", fb), False, False, 0)
+
+        box.pack_start(_section("Font Sizes"), False, False, 0)
+        for k, label, lo, hi in [
+            ("title", "Title  (OS name in header)", 8, 48),
+            ("body",  "Body   (keys / values)",     8, 24),
+            ("small", "Small  (section labels)",    6, 18),
+        ]:
+            sb = _spin(self._cfg["font_sizes"][k], lo, hi)
+            self._w[f"fs_{k}"] = sb
+            box.pack_start(self._row(label, sb), False, False, 0)
+
+        box.pack_start(_section("Panel Layout"), False, False, 0)
+        cb = _combo(["top", "left"], self._cfg["layout"])
+        self._w["layout"] = cb
+        box.pack_start(self._row("Layout", cb), False, False, 0)
+        box.pack_start(_hint('"top" = header on top    |    "left" = sidebar layout'), False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Sections ────────────────────────────────────────────────────────
+
+    def _page_sections(self) -> Gtk.Widget:
+        box = self._padded()
+        box.pack_start(_section("Visible Sections & Display Order"), False, False, 0)
+        box.pack_start(_hint("Check to show • uncheck to hide • use ↑ ↓ to reorder"), False, False, 0)
+
+        ALL     = ["hardware", "desktop", "terminal", "development", "uptime"]
+        active  = self._cfg["sections"]
+        ordered = active + [s for s in ALL if s not in active]
+
+        store = Gtk.ListStore(str, bool)
+        for s in ordered:
+            store.append([s, s in active])
+        self._w["sections_store"] = store
+
+        tv = Gtk.TreeView(model=store)
+        tv.set_reorderable(True)
+        tv.set_headers_visible(False)
+        tv.set_margin_bottom(10)
+
+        toggle = Gtk.CellRendererToggle()
+        toggle.connect("toggled", lambda _, path: store[path].__setitem__(1, not store[path][1]))
+        tv.append_column(Gtk.TreeViewColumn("", toggle, active=1))
+
+        txt_r = Gtk.CellRendererText()
+        txt_r.set_property("foreground", self._theme["txt"])
+        tv.append_column(Gtk.TreeViewColumn("Section", txt_r, text=0))
+        box.pack_start(tv, False, False, 0)
+
+        btn_row = Gtk.Box(spacing=8)
+
+        def _move(d):
+            model, it = tv.get_selection().get_selected()
+            if not it:
+                return
+            if d < 0:
+                prev = model.iter_previous(it)
+                if prev: model.move_before(it, prev)
+            else:
+                nxt = model.iter_next(it)
+                if nxt:  model.move_after(it, nxt)
+
+        up_btn = Gtk.Button(label="↑  Move Up")
+        up_btn.connect("clicked", lambda *_: _move(-1))
+        dn_btn = Gtk.Button(label="↓  Move Down")
+        dn_btn.connect("clicked", lambda *_: _move(1))
+        btn_row.pack_start(up_btn, False, False, 0)
+        btn_row.pack_start(dn_btn, False, False, 0)
+        box.pack_start(btn_row, False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Dev Tools ───────────────────────────────────────────────────────
+
+    def _page_devtools(self) -> Gtk.Widget:
+        box = self._padded()
+        box.pack_start(_section("Development Tools"), False, False, 0)
+        box.pack_start(_hint("Double-click any cell to edit • rows with empty output are hidden in vsFetch"), False, False, 0)
+
+        store = Gtk.ListStore(str, str, str)
+        for t in self._cfg["dev_tools"]:
+            store.append([t.get("icon", ""), t.get("name", ""), t.get("cmd", "")])
+        self._w["devtools_store"] = store
+
+        tv = Gtk.TreeView(model=store)
+        tv.set_headers_visible(True)
+        tv.set_grid_lines(Gtk.TreeViewGridLines.HORIZONTAL)
+
+        for col_idx, (title, width) in enumerate([("Icon", 64), ("Name", 110), ("Command", 0)]):
+            r = Gtk.CellRendererText()
+            r.set_property("editable", True)
+            r.set_property("foreground", self._theme["txt"])
+            r.connect("edited", lambda _, path, text, ci=col_idx: store[path].__setitem__(ci, text))
+            col = Gtk.TreeViewColumn(title, r, text=col_idx)
+            if width:
+                col.set_min_width(width)
+                col.set_fixed_width(width)
+            else:
+                col.set_expand(True)
+            tv.append_column(col)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        sw.add(tv)
+        box.pack_start(sw, True, True, 0)
+
+        btn_row = Gtk.Box(spacing=8)
+        btn_row.set_margin_top(10)
+
+        add_btn = Gtk.Button(label="+  Add Tool")
+        add_btn.connect("clicked", lambda *_: store.append(["", "New", "echo version"]))
+
+        rm_btn = Gtk.Button(label="−  Remove Selected")
+        def _remove(*_):
+            model, it = tv.get_selection().get_selected()
+            if it: model.remove(it)
+        rm_btn.connect("clicked", _remove)
+
+        btn_row.pack_start(add_btn, False, False, 0)
+        btn_row.pack_start(rm_btn,  False, False, 0)
+        box.pack_start(btn_row, False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Window ──────────────────────────────────────────────────────────
+
+    def _page_window(self) -> Gtk.Widget:
+        box = self._padded()
+
+        box.pack_start(_section("Window Dimensions"), False, False, 0)
+        for k, label, lo, hi in [
+            ("width",       "Width (px)",           300, 1600),
+            ("height_full", "Height — full mode",   300, 1200),
+            ("height_mini", "Height — mini mode",   150,  800),
+        ]:
+            sb = _spin(self._cfg["window"][k], lo, hi, step=10)
+            self._w[f"win_{k}"] = sb
+            box.pack_start(self._row(label, sb), False, False, 0)
+
+        box.pack_start(_section("Logo"), False, False, 0)
+
+        sb = _spin(self._cfg["logo"]["size"], 16, 256, step=4)
+        self._w["logo_size"] = sb
+        box.pack_start(self._row("Logo size (px)", sb), False, False, 0)
+
+        ov_box = Gtk.Box(spacing=6)
+        ov_e = Gtk.Entry()
+        ov_e.set_text(self._cfg["logo"]["override"])
+        ov_e.set_placeholder_text("empty = auto-detect distro logo")
+        ov_e.set_hexpand(True)
+        self._w["logo_override"] = ov_e
+        self._wire_path_validation(ov_e)
+        ov_btn = Gtk.Button(label="…")
+        def _pick_logo(*_):
+            p = _file_chooser(self, "Select logo image",
+                              mime_types=["image/png", "image/svg+xml", "image/jpeg"])
+            if p: ov_e.set_text(p)
+        ov_btn.connect("clicked", _pick_logo)
+        ov_box.pack_start(ov_e,   True,  True,  0)
+        ov_box.pack_start(ov_btn, False, False, 0)
+        box.pack_start(self._row("Override path / icon name", ov_box), False, False, 0)
+
+        sp = _combo(["top", "bottom"], self._cfg["logo"]["sidebar_position"])
+        self._w["logo_sidebar_pos"] = sp
+        box.pack_start(self._row("Sidebar logo position", sp), False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: Effects ─────────────────────────────────────────────────────────
+
+    def _page_effects(self) -> Gtk.Widget:
+        box = self._padded()
+
+        box.pack_start(_section("Animation"), False, False, 0)
+
+        sw_anim = Gtk.Switch()
+        sw_anim.set_active(self._cfg["animation"]["enabled"])
+        self._w["anim_enabled"] = sw_anim
+        box.pack_start(self._row("Enabled", sw_anim, switch=True), False, False, 0)
+
+        type_cb = _combo(["rain", "snow", "matrix", "aurora", "warp"],
+                         self._cfg["animation"]["type"])
+        self._w["anim_type"] = type_cb
+        box.pack_start(self._row("Type", type_cb), False, False, 0)
+
+        scope_cb = _combo(["body", "full"], self._cfg["animation"]["scope"])
+        self._w["anim_scope"] = scope_cb
+        box.pack_start(self._row("Scope", scope_cb), False, False, 0)
+        box.pack_start(_hint('"body" = below header only    |    "full" = entire window'), False, False, 0)
+
+        color_e = Gtk.Entry()
+        color_e.set_text(self._cfg["animation"]["color"])
+        color_e.set_placeholder_text("empty = uses accent color from palette")
+        self._w["anim_color"] = color_e
+        box.pack_start(self._row("Color (hex)", color_e), False, False, 0)
+
+        for wkey, label, lo, hi, step, digits in [
+            ("anim_opacity", "Opacity",   0.0, 1.0,  0.05, 2),
+            ("anim_speed",   "Speed",     0.1, 5.0,  0.1,  1),
+            ("anim_drops",   "Particles", 10,  500,  10,   0),
+        ]:
+            sb = _spin(self._cfg["animation"][wkey.replace("anim_","")], lo, hi, step=step, digits=digits)
+            self._w[wkey] = sb
+            box.pack_start(self._row(label, sb), False, False, 0)
+        box.pack_start(_hint('"Particles" = drop / flake / star count — not used by aurora'), False, False, 0)
+
+        box.pack_start(Gtk.Separator(), False, False, 0)
+
+        box.pack_start(_section("Gradient Bar"), False, False, 0)
+        box.pack_start(_hint("Animated 2-color scrolling separator between header and content"), False, False, 0)
+
+        sw_gb = Gtk.Switch()
+        sw_gb.set_active(self._cfg["gradient_bar"]["enabled"])
+        self._w["gb_enabled"] = sw_gb
+        box.pack_start(self._row("Enabled", sw_gb, switch=True), False, False, 0)
+
+        for k, label in [("color_a", "Color A"), ("color_b", "Color B")]:
+            btn = _color_btn(self._cfg["gradient_bar"][k])
+            self._w[f"gb_{k}"] = btn
+            box.pack_start(self._row(label, btn), False, False, 0)
+
+        box.pack_start(Gtk.Separator(), False, False, 0)
+
+        box.pack_start(_section("Background Image"), False, False, 0)
+        box.pack_start(_hint("Image overlaid in the bottom-right corner of the window"), False, False, 0)
+
+        sw_bgi = Gtk.Switch()
+        sw_bgi.set_active(self._cfg["bg_image"]["enabled"])
+        self._w["bgi_enabled"] = sw_bgi
+        box.pack_start(self._row("Enabled", sw_bgi, switch=True), False, False, 0)
+
+        path_box = Gtk.Box(spacing=6)
+        path_e = Gtk.Entry()
+        path_e.set_text(self._cfg["bg_image"]["path"])
+        path_e.set_placeholder_text("empty = distro logo fallback")
+        path_e.set_hexpand(True)
+        self._w["bgi_path"] = path_e
+        self._wire_path_validation(path_e)
+        pick_btn = Gtk.Button(label="…")
+        def _pick_image(*_):
+            p = _file_chooser(self, "Select background image",
+                              mime_types=["image/png", "image/jpeg", "image/svg+xml"])
+            if p: path_e.set_text(p)
+        pick_btn.connect("clicked", _pick_image)
+        path_box.pack_start(path_e,   True,  True,  0)
+        path_box.pack_start(pick_btn, False, False, 0)
+        box.pack_start(self._row("Image path", path_box), False, False, 0)
+
+        sb_size = _spin(self._cfg["bg_image"]["size"], 50, 600, step=10)
+        self._w["bgi_size"] = sb_size
+        box.pack_start(self._row("Size (px)", sb_size), False, False, 0)
+
+        sb_op = _spin(self._cfg["bg_image"]["opacity"], 0.0, 1.0, step=0.05, digits=2)
+        self._w["bgi_opacity"] = sb_op
+        box.pack_start(self._row("Opacity  (0.0 – 1.0)", sb_op), False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: General ─────────────────────────────────────────────────────────
+
+    def _page_general(self) -> Gtk.Widget:
+        box = self._padded()
+
+        box.pack_start(_section("Startup"), False, False, 0)
+
+        mode_cb = _combo(["full", "mini", "version"], self._cfg["default_mode"])
+        self._w["default_mode"] = mode_cb
+        box.pack_start(self._row("Default mode", mode_cb), False, False, 0)
+        box.pack_start(_hint("CLI flags --mini / --version override this setting"), False, False, 0)
+
+        chassis_e = Gtk.Entry()
+        chassis_e.set_text(self._cfg.get("chassis", ""))
+        chassis_e.set_placeholder_text("empty = auto-detect from DMI  (e.g. Laptop)")
+        self._w["chassis"] = chassis_e
+        box.pack_start(self._row("Chassis label override", chassis_e), False, False, 0)
+
+        box.pack_start(_section("Theme (extends)"), False, False, 0)
+        box.pack_start(_hint("Points to a theme file whose values override everything in config.json"), False, False, 0)
+
+        ext_box = Gtk.Box(spacing=6)
+        ext_e = Gtk.Entry()
+        ext_e.set_text(self._cfg.get("extends", ""))
+        ext_e.set_placeholder_text("empty = no theme  (e.g. ~/themes/forest.json)")
+        ext_e.set_hexpand(True)
+        self._w["extends"] = ext_e
+        self._wire_path_validation(ext_e)
+        pick_btn = Gtk.Button(label="…")
+        def _pick_theme(*_):
+            p = _file_chooser(self, "Select theme file", patterns=["*.json"])
+            if p: ext_e.set_text(p)
+        pick_btn.connect("clicked", _pick_theme)
+        ext_box.pack_start(ext_e,     True,  True,  0)
+        ext_box.pack_start(pick_btn,  False, False, 0)
+        box.pack_start(self._row("Extends (theme file)", ext_box), False, False, 0)
+
+        return _scrolled(box)
+
+    # ── page: About ───────────────────────────────────────────────────────────
+
+    def _page_about(self) -> Gtk.Widget:
+        t = self._theme
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_halign(Gtk.Align.CENTER)
+        outer.set_valign(Gtk.Align.CENTER)
+        outer.set_border_width(40)
+
+        # ── app icon + name ───────────────────────────────────────────────────
+        icon_img = Gtk.Image.new_from_icon_name("preferences-system", Gtk.IconSize.INVALID)
+        icon_img.set_pixel_size(72)
+        icon_img.set_margin_bottom(12)
+        outer.pack_start(icon_img, False, False, 0)
+
+        app_lbl = Gtk.Label()
+        app_lbl.set_markup(
+            f'<span foreground="{t["txt"]}" weight="bold" size="20000">vsFetch Settings</span>'
+        )
+        outer.pack_start(app_lbl, False, False, 0)
+
+        ver_lbl = Gtk.Label()
+        ver_lbl.set_markup(
+            f'<span foreground="{t["dim"]}" size="13000">Version {__version__}</span>'
+        )
+        ver_lbl.set_margin_top(4)
+        outer.pack_start(ver_lbl, False, False, 0)
+
+        desc_lbl = Gtk.Label()
+        desc_lbl.set_markup(
+            f'<span foreground="{t["dim"]}" size="13000">Graphical config editor for vsFetch</span>'
+        )
+        desc_lbl.set_margin_top(2)
+        outer.pack_start(desc_lbl, False, False, 0)
+
+        lic_lbl = Gtk.Label()
+        lic_lbl.set_markup(
+            f'<span foreground="{t["acc"]}" size="11000">MIT License</span>'
+        )
+        lic_lbl.set_margin_top(6)
+        outer.pack_start(lic_lbl, False, False, 0)
+
+        sep1 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep1.set_margin_top(24)
+        sep1.set_margin_bottom(20)
+        outer.pack_start(sep1, False, False, 0)
+
+        # ── author ────────────────────────────────────────────────────────────
+        author_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14)
+        author_box.set_halign(Gtk.Align.CENTER)
+
+        user_img = Gtk.Image.new_from_icon_name("system-users", Gtk.IconSize.INVALID)
+        user_img.set_pixel_size(36)
+        author_box.pack_start(user_img, False, False, 0)
+
+        author_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        author_name = Gtk.Label()
+        author_name.set_markup(
+            f'<span foreground="{t["txt"]}" weight="bold" size="14000">Víctor Sosa</span>'
+        )
+        author_name.set_halign(Gtk.Align.START)
+        author_role = Gtk.Label()
+        author_role.set_markup(
+            f'<span foreground="{t["dim"]}" size="12000">Developer  ·  victorsosa.com</span>'
+        )
+        author_role.set_halign(Gtk.Align.START)
+        author_vbox.pack_start(author_name, False, False, 0)
+        author_vbox.pack_start(author_role, False, False, 0)
+        author_box.pack_start(author_vbox, False, False, 0)
+        outer.pack_start(author_box, False, False, 0)
+
+        sep2 = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep2.set_margin_top(20)
+        sep2.set_margin_bottom(20)
+        outer.pack_start(sep2, False, False, 0)
+
+        # ── link buttons ──────────────────────────────────────────────────────
+        def _open(url):
+            subprocess.Popen(["xdg-open", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+        btn_row = Gtk.Box(spacing=12)
+        btn_row.set_halign(Gtk.Align.CENTER)
+
+        gh_btn = Gtk.Button()
+        gh_box = Gtk.Box(spacing=6)
+        gh_box.pack_start(Gtk.Image.new_from_icon_name("system-software-install", Gtk.IconSize.MENU), False, False, 0)
+        gh_box.pack_start(Gtk.Label(label="vsFetch Settings"), False, False, 0)
+        gh_btn.add(gh_box)
+        gh_btn.get_style_context().add_class("save-btn")
+        gh_btn.connect("clicked", lambda *_: _open("https://github.com/victorsosaMx/vsFetch-Settings"))
+
+        vsfetch_btn = Gtk.Button()
+        vsf_box = Gtk.Box(spacing=6)
+        vsf_box.pack_start(Gtk.Image.new_from_icon_name("system-software-install", Gtk.IconSize.MENU), False, False, 0)
+        vsf_box.pack_start(Gtk.Label(label="vsFetch"), False, False, 0)
+        vsfetch_btn.add(vsf_box)
+        vsfetch_btn.get_style_context().add_class("open-btn")
+        vsfetch_btn.connect("clicked", lambda *_: _open("https://github.com/victorsosaMx/vsFetch"))
+
+        web_btn = Gtk.Button()
+        web_box = Gtk.Box(spacing=6)
+        web_box.pack_start(Gtk.Image.new_from_icon_name("applications-internet", Gtk.IconSize.MENU), False, False, 0)
+        web_box.pack_start(Gtk.Label(label="victorsosa.com"), False, False, 0)
+        web_btn.add(web_box)
+        web_btn.get_style_context().add_class("open-btn")
+        web_btn.connect("clicked", lambda *_: _open("https://victorsosa.com/"))
+
+        btn_row.pack_start(gh_btn,      False, False, 0)
+        btn_row.pack_start(vsfetch_btn, False, False, 0)
+        btn_row.pack_start(web_btn,     False, False, 0)
+        outer.pack_start(btn_row, False, False, 0)
+
+        # wrap in a centered scrolled window
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.get_style_context().add_class("page-scroll")
+        vp = Gtk.Viewport()
+        vp.set_shadow_type(Gtk.ShadowType.NONE)
+        vp.get_style_context().add_class("page-scroll")
+        vp.add(outer)
+        sw.add(vp)
+        return sw
+
+    # ── actions ───────────────────────────────────────────────────────────────
+
+    def _apply_matugen_colors(self, colors: dict, source_label: str):
+        """Map parsed matugen color dict onto the palette ColorButtons."""
+        palette_btns = self._w.get("palette", {})
+        applied = 0
+        for vsf_key, m3_role in _MATUGEN_MAP.items():
+            if vsf_key not in palette_btns:
+                continue
+            try:
+                hex_val = colors[m3_role]["default"]["color"]
+                palette_btns[vsf_key].set_rgba(_hex_to_rgba(hex_val))
+                applied += 1
+            except (KeyError, TypeError):
+                pass
+        self._status(
+            f"{source_label}  ({applied}/14 colors)",
+            "·  Review colors above  ·  Save As… to keep",
+        )
+
+    def _wire_path_validation(self, entry: Gtk.Entry):
+        """Highlight entry red when the typed path doesn't exist on disk."""
+        def _validate(*_):
+            p = entry.get_text().strip()
+            p = os.path.expanduser(p)
+            ok = (p == "") or os.path.exists(p)
+            ctx = entry.get_style_context()
+            if ok:
+                ctx.remove_class("entry-error")
+            else:
+                ctx.add_class("entry-error")
+        entry.connect("changed", _validate)
+        _validate()
+
+    def _load_palette_from_image(self, *_):
+        """Run matugen on a chosen image and map Material You colors to the palette."""
+        if not shutil.which("matugen"):
+            self._err("matugen not found.\n\nInstall it with:\n  yay -S matugen")
+            return
+        img = _file_chooser(self, "Select image for palette extraction",
+                            mime_types=["image/png", "image/jpeg", "image/webp",
+                                        "image/jpg", "image/bmp"])
+        if not img:
+            return
+        mode = self._rnd_mode.get_active_id()
+        try:
+            result = subprocess.run(
+                ["matugen", "image", img, "-m", mode, "-j", "hex",
+                 "--source-color-index", "0", "--dry-run"],
+                capture_output=True, text=True, timeout=15,
+            )
+            if result.returncode != 0:
+                result = subprocess.run(
+                    ["matugen", "image", img, "-m", mode, "-j", "hex",
+                     "--source-color-index", "0"],
+                    capture_output=True, text=True, timeout=15,
+                )
+            colors = json.loads(result.stdout)["colors"]
+        except Exception as e:
+            self._err(f"matugen failed:\n{e}")
+            return
+        self._apply_matugen_colors(colors, "󰸉  Palette extracted from image")
+
+    def _load_palette_from_color(self, *_):
+        """Run matugen on a single hex color and map Material You colors to palette."""
+        if not shutil.which("matugen"):
+            self._err("matugen not found.\n\nInstall it with:\n  yay -S matugen")
+            return
+        dlg = Gtk.ColorChooserDialog(title="Pick a base color", parent=self)
+        if dlg.run() != Gtk.ResponseType.OK:
+            dlg.destroy()
+            return
+        rgba = dlg.get_rgba()
+        dlg.destroy()
+        hex_color = _rgba_to_hex(rgba)
+        mode = self._rnd_mode.get_active_id()
+        try:
+            result = subprocess.run(
+                ["matugen", "color", "hex", hex_color,
+                 "-m", mode, "-j", "hex", "--dry-run"],
+                capture_output=True, text=True, timeout=15,
+            )
+            colors = json.loads(result.stdout)["colors"]
+        except Exception as e:
+            self._err(f"matugen failed:\n{e}")
+            return
+        self._apply_matugen_colors(colors, f"  Palette from {hex_color}")
+
+    def _random_palette(self, *_):
+        """Generate a random coherent palette (dark or light) using colorsys."""
+        mode = self._rnd_mode.get_active_id()
+        h = random.random()
+        if mode == "dark":
+            pal = {
+                "bg":               _hsv_to_hex(h, 0.22, 0.08),
+                "bg_header":        _hsv_to_hex(h, 0.20, 0.12),
+                "border":           _hsv_to_hex(h, 0.22, 0.22),
+                "text":             _hsv_to_hex(h, 0.07, 0.92),
+                "text_dim":         _hsv_to_hex(h, 0.12, 0.46),
+                "text_mid":         _hsv_to_hex(h, 0.10, 0.70),
+                "accent":           _hsv_to_hex(h, 0.65, 0.92),
+                "ok":               _hsv_to_hex(0.34, 0.58, 0.72),
+                "mid":              _hsv_to_hex(0.11, 0.72, 0.94),
+                "hi":               _hsv_to_hex(0.00, 0.72, 0.88),
+                "btn_github":       _hsv_to_hex(0.34, 0.62, 0.40),
+                "btn_github_hover": _hsv_to_hex(0.34, 0.55, 0.56),
+                "btn_web":          _hsv_to_hex(h + 0.55, 0.65, 0.55),
+                "btn_web_hover":    _hsv_to_hex(h + 0.55, 0.58, 0.70),
+            }
+        else:
+            pal = {
+                "bg":               _hsv_to_hex(h, 0.06, 0.97),
+                "bg_header":        _hsv_to_hex(h, 0.10, 0.91),
+                "border":           _hsv_to_hex(h, 0.14, 0.76),
+                "text":             _hsv_to_hex(h, 0.18, 0.14),
+                "text_dim":         _hsv_to_hex(h, 0.10, 0.52),
+                "text_mid":         _hsv_to_hex(h, 0.12, 0.34),
+                "accent":           _hsv_to_hex(h, 0.70, 0.60),
+                "ok":               _hsv_to_hex(0.34, 0.62, 0.42),
+                "mid":              _hsv_to_hex(0.11, 0.70, 0.58),
+                "hi":               _hsv_to_hex(0.00, 0.68, 0.70),
+                "btn_github":       _hsv_to_hex(0.34, 0.62, 0.40),
+                "btn_github_hover": _hsv_to_hex(0.34, 0.55, 0.56),
+                "btn_web":          _hsv_to_hex(h + 0.55, 0.65, 0.45),
+                "btn_web_hover":    _hsv_to_hex(h + 0.55, 0.58, 0.58),
+            }
+        palette_btns = self._w.get("palette", {})
+        for key, hex_val in pal.items():
+            if key in palette_btns:
+                palette_btns[key].set_rgba(_hex_to_rgba(hex_val))
+
+        self._status(
+            f"🎲  Random {mode} palette generated  (hue {round(h*360)}°)",
+            "·  Hit again for another one  ·  Save As… to keep",
+        )
+
+    def _export_theme(self, *_):
+        """Export aesthetic keys as a shareable theme file, user picks what to include."""
+        self._collect()
+
+        dlg = Gtk.Dialog(title="Export Theme", parent=self,
+                         flags=Gtk.DialogFlags.MODAL)
+        dlg.set_default_size(400, -1)
+        area = dlg.get_content_area()
+        area.set_spacing(4)
+        area.set_border_width(20)
+
+        hdr = Gtk.Label()
+        hdr.set_markup(f'<b>Select what to include in the exported theme</b>')
+        hdr.set_xalign(0)
+        area.pack_start(hdr, False, False, 0)
+
+        hint_lbl = Gtk.Label(label="Uncheck personal/machine-specific keys before sharing.")
+        hint_lbl.set_xalign(0)
+        hint_lbl.get_style_context().add_class("hint-label")
+        hint_lbl.set_margin_top(4)
+        hint_lbl.set_margin_bottom(12)
+        area.pack_start(hint_lbl, False, False, 0)
+
+        GROUPS = [
+            ("palette",      "Palette  (colors)",                  True),
+            ("animation",    "Animation",                          True),
+            ("gradient_bar", "Gradient bar",                       True),
+            ("layout",       "Layout  (top / left)",               True),
+            ("font",         "Font family",                        True),
+            ("font_sizes",   "Font sizes",                         True),
+            ("logo",         "Logo settings",                      True),
+            ("window",       "Window dimensions",                  True),
+            ("default_mode", "Default mode",                       True),
+            ("sections",     "Sections & order  (personal)",       False),
+            ("dev_tools",    "Dev tools list  (personal)",         False),
+            ("bg_image",     "Background image  (has your path!)", False),
+            ("extends",      "Extends reference",                  False),
+            ("chassis",      "Chassis label  (personal)",          False),
+        ]
+        checks = {}
+        for key, label, default in GROUPS:
+            cb = Gtk.CheckButton(label=label)
+            cb.set_active(default)
+            checks[key] = cb
+            area.pack_start(cb, False, False, 2)
+
+        toggle_row = Gtk.Box(spacing=8)
+        toggle_row.set_margin_top(10)
+        all_btn = Gtk.Button(label="Select all")
+        none_btn = Gtk.Button(label="Deselect all")
+        def _select_all(*_):
+            for cb in checks.values(): cb.set_active(True)
+        def _select_none(*_):
+            for cb in checks.values(): cb.set_active(False)
+        all_btn.connect("clicked", _select_all)
+        none_btn.connect("clicked", _select_none)
+        toggle_row.pack_start(all_btn,  False, False, 0)
+        toggle_row.pack_start(none_btn, False, False, 0)
+        area.pack_start(toggle_row, False, False, 0)
+
+        dlg.add_button("Cancel",   Gtk.ResponseType.CANCEL)
+        dlg.add_button("Export…",  Gtk.ResponseType.OK)
+        dlg.set_default_response(Gtk.ResponseType.OK)
+        dlg.show_all()
+
+        if dlg.run() != Gtk.ResponseType.OK:
+            dlg.destroy()
+            return
+
+        selected = {k for k, cb in checks.items() if cb.get_active()}
+        dlg.destroy()
+
+        out = {"extends": ""}
+        SCALAR = {"layout", "font", "default_mode", "chassis", "extends"}
+        for key in selected:
+            if key in SCALAR:
+                out[key] = self._cfg.get(key, "")
+            else:
+                out[key] = copy.deepcopy(self._cfg[key])
+
+        fc = Gtk.FileChooserDialog(
+            title="Export theme as…", parent=self,
+            action=Gtk.FileChooserAction.SAVE,
+            buttons=("Cancel", Gtk.ResponseType.CANCEL,
+                     "Export",  Gtk.ResponseType.OK),
+        )
+        fc.set_do_overwrite_confirmation(True)
+        themes_dir = os.path.expanduser("~/.config/vsfetch/themes")
+        fc.set_current_folder(themes_dir if os.path.isdir(themes_dir)
+                              else os.path.dirname(self._config_path))
+        fc.set_current_name("my-theme.json")
+        ff = Gtk.FileFilter()
+        ff.set_name("JSON theme")
+        ff.add_pattern("*.json")
+        fc.add_filter(ff)
+
+        if fc.run() == Gtk.ResponseType.OK:
+            path = fc.get_filename()
+            fc.destroy()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            try:
+                with open(path, "w") as f:
+                    json.dump(out, f, indent=2, ensure_ascii=False)
+                self._status(
+                    f"✓  Theme exported  →  {path}",
+                    '·  Use it with:  "extends": "' + path + '"',
+                )
+            except Exception as e:
+                self._err(f"Could not export:\n{e}")
+        else:
+            fc.destroy()
+
+    def _apply_template(self, tpl: dict) -> dict:
+        """Merge template aesthetics over current personal config."""
+        saved = {k: copy.deepcopy(self._cfg[k]) for k in
+                 ("bg_image", "extends", "chassis", "dev_tools", "sections")}
+        merged = copy.deepcopy(tpl)
+        merged.update(saved)
+        return merged
+
+    def _preview(self, *_):
+        self._collect()
+        self._preview_cfg(self._cfg)
+
+    # ── dirty tracking ────────────────────────────────────────────────────────
+
+    def _mark_dirty(self, *_):
+        if not self._dirty:
+            self._dirty = True
+            if self._path_lbl:
+                self._path_lbl.set_text(self._config_path + "  ●")
+
+    def _clear_dirty(self):
+        self._dirty = False
+        if self._path_lbl:
+            self._path_lbl.set_text(self._config_path)
+
+    def _confirm_discard(self, verb: str) -> bool:
+        """Returns True if safe to proceed (clean state or user confirmed)."""
+        if not self._dirty:
+            return True
+        dlg = Gtk.MessageDialog(
+            parent=self, flags=Gtk.DialogFlags.MODAL,
+            message_type=Gtk.MessageType.WARNING,
+            buttons=Gtk.ButtonsType.NONE,
+            text="Unsaved changes",
+        )
+        dlg.format_secondary_text(f"You have unsaved changes. {verb} anyway?")
+        dlg.add_button("Cancel",  Gtk.ResponseType.CANCEL)
+        dlg.add_button(verb,      Gtk.ResponseType.OK)
+        dlg.set_default_response(Gtk.ResponseType.CANCEL)
+        resp = dlg.run()
+        dlg.destroy()
+        return resp == Gtk.ResponseType.OK
+
+    def _connect_dirty_signals(self):
+        """Connect change signals on all widgets to _mark_dirty."""
+        w = self._w
+        for btn in w.get("palette", {}).values():
+            btn.connect("color-set", self._mark_dirty)
+        if "font" in w:
+            w["font"].connect("font-set", self._mark_dirty)
+        for key in ("fs_title", "fs_body", "fs_small",
+                    "win_width", "win_height_full", "win_height_mini",
+                    "logo_size", "bgi_size", "bgi_opacity",
+                    "anim_opacity", "anim_speed", "anim_drops"):
+            if key in w:
+                w[key].connect("value-changed", self._mark_dirty)
+        for key in ("layout", "default_mode", "logo_sidebar_pos",
+                    "anim_type", "anim_scope"):
+            if key in w:
+                w[key].connect("changed", self._mark_dirty)
+        for key in ("chassis", "extends", "logo_override", "bgi_path", "anim_color"):
+            if key in w:
+                w[key].connect("changed", self._mark_dirty)
+        for key in ("anim_enabled", "gb_enabled", "bgi_enabled"):
+            if key in w:
+                w[key].connect("notify::active", self._mark_dirty)
+        for key in ("gb_color_a", "gb_color_b"):
+            if key in w:
+                w[key].connect("color-set", self._mark_dirty)
+        for store_key in ("sections_store", "devtools_store"):
+            if store_key in w:
+                for sig in ("row-changed", "row-inserted", "row-deleted"):
+                    w[store_key].connect(sig, self._mark_dirty)
+
+    def _on_reset(self, *_):
+        if not self._confirm_discard("Reset"):
+            return
+        self._cfg        = copy.deepcopy(DEFAULTS)
+        self._loaded_tpl = None
+        self._rebuild_ui()
+        self._clear_dirty()
+        self._status("↺  Reset to defaults", "·  Catppuccin Mocha  ·  Save As… to keep it")
+
+    def _on_open(self, *_):
+        if not self._confirm_discard("Open"):
+            return
+        p = _file_chooser(self, "Open vsFetch config", patterns=["*.json"])
+        if not p:
+            return
+        self._config_path = p
+        self._load_config()
+        self._rebuild_ui()
+        self._clear_dirty()
+        self._status(f"✓  Opened  {p}")
+
+    def _err(self, msg: str):
+        dlg = Gtk.MessageDialog(parent=self, flags=Gtk.DialogFlags.MODAL,
+                                message_type=Gtk.MessageType.ERROR,
+                                buttons=Gtk.ButtonsType.OK, text=msg)
+        dlg.run(); dlg.destroy()
+
+
+# ── entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    GLib.set_prgname("vsfetch-settings")
+    VsFetchSettings()
+    Gtk.main()
