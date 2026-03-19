@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1 — 2026-03-19
+
+- Add MIT LICENSE file
+
 ## 1.0 — 2026-03-19
 
 Initial release.
